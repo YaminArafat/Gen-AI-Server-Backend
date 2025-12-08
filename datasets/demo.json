@@ -1,0 +1,31 @@
+{
+    "Config": {
+        "Background": {
+            "color": "black",
+            "image": null
+        },
+        "Dial": {
+            "type": "stick"
+        },
+        "Widget": {
+            "color": "white",
+            "Item": [
+                {
+                    "name": "edge_steps",
+                    "type": "edge",
+                    "position": "left"
+                },
+                {
+                    "name": "edge_hr",
+                    "type": "edge",
+                    "position": "right"
+                }
+            ]
+        },
+        "Clock": {
+            "type": "analog",
+            "color": "white",
+            "position": "middle"
+        }
+    }
+}
