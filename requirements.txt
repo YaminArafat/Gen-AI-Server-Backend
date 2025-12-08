@@ -12,4 +12,9 @@ protobuf
 huggingface_hub[hf_xet]
 hf_xet
 diffusers 
+ollama==0.4.9
 flask-cors
+pydub
+git+https://github.com/openai/whisper.git
+faster-whisper
+gunicorn
