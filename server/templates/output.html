@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF=8" />
+        <title>Generated Output</title>
+    </head>
+    <body>
+        <h2>Generated Output</h2>
+        <p><strong>User Input:</strong>{{ user_input }}</p>
+        <p><strong>Config Config JSON:</strong><pre>{{ generated_output }}</pre></p>
+        <p><strong>Background Image:</strong></p><br>
+        <img src="{{ url_for('static', filename='images/' + generated_image) }}" alt="Background Image" />
+
+        <p></p><a href="/">Try Again</a></p>
+    </body>
+</html>
