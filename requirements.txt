@@ -1,0 +1,15 @@
+flask
+jupyter
+transformers
+sentencepiece
+datasets
+accelerate
+Faker
+safetensors
+peft
+huggingface_hub
+protobuf
+huggingface_hub[hf_xet]
+hf_xet
+diffusers 
+flask-cors
