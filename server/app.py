@@ -6,7 +6,6 @@ from transformers import T5Tokenizer, T5ForConditionalGeneration, TFAutoModelFor
 import uuid
 import os
 import requests
-from gauss_prompt_test import get_gauss_inference_output
 os.environ["PATH"] = os.pathsep.join([
     p for p in os.environ["PATH"].split(os.pathsep)
     if "nvidia" not in p.lower() and "cudnn" not in p.lower()
@@ -90,7 +89,7 @@ def multi_task(user_input, host, task_id):
             update_task_status(task_id, "Running", p)
         with gpu_lock:
             print(f"[GPU] processing task {task_id} for: {user_input}")
-            generated_output, generated_image_url = get_gauss_inference_output(user_input)
+            generated_output, generated_image_url = get_Config_config(user_input, host)
             print(generated_output)
             print(generated_image_url)
             imageURL = generated_image_url
@@ -112,8 +111,8 @@ def create_Config_from_text():
     task_id = str(uuid.uuid4())
     update_task_status(task_id, "Queued", progress=0)
     executor.submit(multi_task, user_input, host, task_id)
-    print(generated_image_url)
-    return generated_output
+    # print(generated_image_url)
+    # return generated_output
     return jsonify({
         "task_id": task_id,
         "status": "Queued"
@@ -154,8 +153,8 @@ def index():
         task_id = str(uuid.uuid4())
         update_task_status(task_id, "Queued", progress=0)
         executor.submit(multi_task, user_input, host, task_id)
-        print(generated_image_url)
-        return generated_output
+        # print(generated_image_url)
+        # return generated_output
         while True:
             status_result = requests.get(f"{BASE_URL}/status/{task_id}")
             if status_result.status_code == 200:
