@@ -28,9 +28,9 @@ GPU_CONCURRENCY_SEMAPHORE = asyncio.Semaphore(2)
 #         region_name='us-east-1'
 #     )
 
-async def _gpu_bound_inference(user_input: str, context: str) -> Dict[str, Any]:
+async def _gpu_bound_inference(task_id: str, user_input: str, context: str) -> Dict[str, Any]:
     async with GPU_CONCURRENCY_SEMAPHORE:
-        pipeline_chain = get_orchestration_chain()
+        pipeline_chain = get_orchestration_chain(task_id)
 
         pipeline_output = await pipeline_chain.ainvoke({
                 "user_input": user_input,
@@ -51,7 +51,7 @@ def process_config_generation(self, task_payload: Dict[str, Any]) -> Dict[str, A
     output = None
     
     try:
-        output = asyncio.run(_gpu_bound_inference(user_input, context))
+        output = asyncio.run(_gpu_bound_inference(task_id, user_input, context))
         return {"status": "Success", "data": output["config"]}
         
     except Exception as exc:

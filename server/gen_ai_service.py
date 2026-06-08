@@ -134,7 +134,8 @@ async def dispatch_downstream_media(
     progress_callback: Optional[Callable[[str, int, Optional[dict], Optional[str]], None]] = None,
 ) -> Dict[str, Any]:
     print(f"Dispatching downstream media generation for config: {json_config}")
-    task_id = config.get("configurable", {}).get("task_id")
+    # task_id = config.get("configurable", {}).get("task_id")
+    print(f"task_id: {task_id}")
     output_bundle = {
         "config": json_config.model_dump(),
         "generated_asset_path": None,
@@ -234,17 +235,23 @@ def get_orchestration_chain(
         ("user", "User Request: {user_input}\n\nRAG Context:\n{context}")
     ])
 
-    # async def _media_step(config: Config):
-    #     if progress_callback:
-    #         try:
-    #             progress_callback("LLM complete", 60, None, None)
-    #         except Exception:
-    #             pass
-    #     return await dispatch_downstream_media(config, task_id=task_id, progress_callback=progress_callback)
+    async def _media_step(json_config: Config, config: RunnableConfig) -> Dict[str, Any]:
+        # if progress_callback:
+        #     try:
+        #         progress_callback("LLM complete", 60, None, None)
+        #     except Exception:
+        #         pass
+        return await dispatch_downstream_media(
+            json_config=json_config,
+            config=config,
+            task_id=task_id
+        )
 
-    return prompt_template | structured_llm | RunnableLambda(dispatch_downstream_media)
+    return prompt_template | structured_llm | RunnableLambda(_media_step)
 
-pipeline_chain = get_orchestration_chain()
+def _initialize_pipeline_chain():
+    global p_chain
+    p_chain = get_orchestration_chain()
 
 async def execute_async_pipeline_job(task_id: str, payload: Dict[str, Any]):
     user_input = payload["user_input"]
@@ -269,7 +276,7 @@ async def execute_async_pipeline_job(task_id: str, payload: Dict[str, Any]):
         async with global_task_manager.vram_semaphore:
             print(f"[VRAM Lock Acquired] Processing task {task_id}")
             global_task_manager.update_task(task_id, status="Invoking model", progress=35)
-            pipeline_output = await pipeline_chain.ainvoke({
+            pipeline_output = await p_chain.ainvoke({
                 "user_input": user_input,
                 "context": context
             },
