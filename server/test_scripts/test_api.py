@@ -1,6 +1,5 @@
 import requests
 
-# Replace with your actual server IP/port
 BASE_URL = "http://192.168.0.68:5000"
 endpoint = f"{BASE_URL}/api/upload_audio"
 

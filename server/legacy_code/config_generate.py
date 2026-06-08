@@ -1,9 +1,10 @@
 import json
+import os
 from ollama import chat
 from typing import Literal
 from pydantic import BaseModel
 
-from background_image_generate import generate_background_image, generate_background_gif
+from background_image_generate import background_image_generator
 from typing import Union, List, Optional
 
 
@@ -91,7 +92,7 @@ class Config(BaseModel):
     Config: ConfigItems
     
 def get_Config_config(user_input, host, progress_callback=None):
-
+    model=os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_k_m")
     with open('/datasets/prompts.txt', 'r', encoding='utf-8') as f:
         prompt_text = f.read()
     print(user_input)
@@ -105,7 +106,7 @@ def get_Config_config(user_input, host, progress_callback=None):
         }
       ],
       options={'temperature': 0.5},
-      model='llama3.1:8b',
+      model=model,
       format=Config.model_json_schema(),
     )
     progress_callback(30)
@@ -128,14 +129,14 @@ def get_Config_config(user_input, host, progress_callback=None):
         progress_callback(40)
         if extension == "gif":
             out_file = f"/server/static/gifs/ai_generated_{img_prompt}.gif"
-            local_path = generate_background_gif("GENERATE_IMAGE good quality gif image for: " + img_prompt, out_file)
+            local_path = background_image_generator.generate_background_gif("GENERATE_IMAGE good quality gif image for: " + img_prompt, out_file)
             static_path = out_file.split("static/gifs/", 1)[1]
             Config_data["Config"]["Background"]["image"] = f"{host}/static/gifs/{static_path}"
             Config_data["Config"]["Background"]["color"] = "null"
             Config_json = json.dumps(Config_data, indent=2)
         elif extension == "png":
             out_file = f"/server/static/images/ai_generated_{img_prompt}.png"
-            local_path = generate_background_image("GENERATE_IMAGE good quality image for: " + img_prompt, out_file)
+            local_path = background_image_generator.generate_background_image("GENERATE_IMAGE good quality image for: " + img_prompt, out_file)
             static_path = out_file.split("static/images/", 1)[1]
             Config_data["Config"]["Background"]["image"] = f"{host}/static/images/{static_path}"
             Config_data["Config"]["Background"]["color"] = "null"
