@@ -14,17 +14,26 @@ from dotenv import load_dotenv
 
 from server.gen_ai_service import execute_async_pipeline_job, get_orchestration_chain
 from server.task_manager import global_task_manager, TaskState
-from server.rag_vector_store import build_vector_store, query_rag
-from server.speech_to_text_fw import speech_to_text
+from server.rag_vector_store import build_vector_store, chroma_collection_exists, query_rag
+from server.r_and_d_code.speech_to_text_fw import speech_to_text
+from server.celery_app import process_config_generation, celery_engine
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT_DIR / ".env")
 
+async def lifespan(app: FastAPI):
+    print("Application startup: Initializing resources...")
+    initialize_rag_vector_store()
+    yield
+    print("Application shutdown: Cleaning up resources...")
+
 app = FastAPI(
     title="Text-to-JSON Config Generation AI Service",
     description="Production-grade Multimodal LangChain Execution Engine with local RAG.",
-    version="2.0.0",
+    version="4.0.0",
+    lifespan=lifespan
 )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -59,27 +68,35 @@ def update_task_status(task_id: str, status: str, progress: int = 0, result=None
 def health() -> dict:
     return {"status": "ok", "service": "config-generation-ai"}
     
-
-@app.post("/api/v1/config/text", status_code=202)
+@app.post("/api/v4/config/text", status_code=202)
 async def config_from_text(request: ConfigRequest) -> dict:
     if not request.inputText.strip():
         raise HTTPException(status_code=400, detail="inputText is required")
+    
+    context = "No additional context provided."
+    docs = []
+    if request.useRAG:
+        try:
+            docs = query_rag(request.inputText, k=4)
+            context = "\n\n".join(doc["page_content"] for doc in docs)
+        except Exception as e:
+            pass
 
-    task_id = global_task_manager.create_task()
     
     job_payload = {
         "user_input": request.inputText.strip(),
+        "context": context,
         "use_rag": request.useRAG
     }
-    await global_task_manager.enqueue_job(task_id, job_payload)
-    
+    async_job = process_config_generation.delay(job_payload)    
+
     return {
-        "task_id": task_id,
+        "task_id": async_job.id,
         "status": "Queued",
         "message": "Task queued for asynchronous compilation."
     }
 
-@app.post("/api/v1/config/audio", status_code=202)
+@app.post("/api/v4/config/audio", status_code=202)
 async def config_from_audio(audio: UploadFile = File(...), useRAG: bool = True) -> dict:
     if not audio:
         raise HTTPException(status_code=400, detail="Audio file payload is required.")
@@ -88,20 +105,47 @@ async def config_from_audio(audio: UploadFile = File(...), useRAG: bool = True) 
     if not text:
         raise HTTPException(status_code=500, detail="Audio transcription failure.")
 
-    task_id = global_task_manager.create_task()
+    context = "No additional context provided."
+    docs = []
+    if useRAG:
+        try:
+            docs = query_rag(text, k=4)
+            context = "\n\n".join(doc["page_content"] for doc in docs)
+        except Exception as e:
+            pass
+
     
     job_payload = {
         "user_input": text.strip(),
+        "context": context,
         "use_rag": useRAG
     }
-    await global_task_manager.enqueue_job(task_id, job_payload)
-    
+    async_job = process_config_generation.delay(job_payload)    
+
     return {
-        "task_id": task_id,
-        "transcript": text,
+        "task_id": async_job.id,
         "status": "Queued",
-        "message": "Audio payload transcribed and execution task queued successfully."
+        "message": "Task queued for asynchronous compilation."
     }
+
+def initialize_rag_vector_store():
+    print("Checking RAG Vector Store status...")
+    try:
+        if chroma_collection_exists():
+            print("Existing RAG Vector Store found. Initialization skipped.")
+            return
+        else:
+            store = build_vector_store()
+            store_info = store._collection.get() if hasattr(store, "_collection") else {}
+            document_count = len(store_info.get("ids", []))
+            
+            if document_count == 0:
+                print("Vector store is empty.")
+            else:
+                print(f"Persistent Vector Store initialized with {document_count} documents")
+            
+    except Exception as e:
+        print(f"Failed to initialize RAG Vector store on startup: {e}")
 
 @app.post("/api/v1/knowledge/ingest")
 def knowledge_ingest() -> dict:
@@ -168,12 +212,17 @@ def _run_config_task(task_id: str, user_input: str, use_rag: bool):
     except Exception as exc:
         update_task_status(task_id, "Failed", 100, error=str(exc))
 
-@app.get("/api/v3/tasks/{task_id}", response_model=TaskState)
+@app.get("/api/v2/tasks/{task_id}")
 async def get_task_status(task_id: str):
-    state = global_task_manager.get_task_status(task_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Requeste task id not found.")
-    return state
+    job_query = celery_engine.AsyncResult(task_id)
+    if job_query.state == "PENDING":
+        return {"task_id": task_id, "status": "Pending", "result": None}
+    elif job_query.state == "SUCCESS":
+        return {"task_id": task_id, "status": "Completed", "result": job_query.result}
+    elif job_query.state == "FAILURE":
+        return {"task_id": task_id, "status": "Failed", "error": str(job_query.info)}
+        
+    return {"task_id": task_id, "status": job_query.state, "result": None}
 
 async def continuous_queue_worker():
     print("Background Execution Queue Worker Booted Successfully.")
@@ -196,6 +245,12 @@ async def continuous_queue_worker():
 async def startup_event():
     asyncio.create_task(continuous_queue_worker())
 
+@app.get("/api/v1/tasks/{task_id}", response_model=TaskState)
+async def get_task_status(task_id: str):
+    state = global_task_manager.get_task_status(task_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Requeste task id not found.")
+    return state
 
 @app.get("/api/v1/task/status/{task_id}")
 def task_status(task_id: str):
@@ -241,6 +296,25 @@ def config_from_text(request: ConfigRequest):
     executor.submit(_run_config_task, task_id, request.inputText.strip(), request.useRAG)
 
     return {"task_id": task_id, "status": "Queued"}
+
+@app.post("/api/v3/config/text", status_code=202)
+async def config_from_text(request: ConfigRequest) -> dict:
+    if not request.inputText.strip():
+        raise HTTPException(status_code=400, detail="inputText is required")
+
+    task_id = global_task_manager.create_task()
+    
+    job_payload = {
+        "user_input": request.inputText.strip(),
+        "use_rag": request.useRAG
+    }
+    await global_task_manager.enqueue_job(task_id, job_payload)
+    
+    return {
+        "task_id": task_id,
+        "status": "Queued",
+        "message": "Task queued for asynchronous compilation."
+    }
 
 @app.post("/api/v1/config/text")
 async def config_from_text(request: ConfigRequest) -> dict:
@@ -306,3 +380,27 @@ async def config_from_audio(audio: UploadFile = File(...), useRAG: bool = True) 
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"LangChain Audio Pipeline Execution Failure: {exc}")
+
+@app.post("/api/v3/config/audio", status_code=202)
+async def config_from_audio(audio: UploadFile = File(...), useRAG: bool = True) -> dict:
+    if not audio:
+        raise HTTPException(status_code=400, detail="Audio file payload is required.")
+
+    text = speech_to_text(audio)
+    if not text:
+        raise HTTPException(status_code=500, detail="Audio transcription failure.")
+
+    task_id = global_task_manager.create_task()
+    
+    job_payload = {
+        "user_input": text.strip(),
+        "use_rag": useRAG
+    }
+    await global_task_manager.enqueue_job(task_id, job_payload)
+    
+    return {
+        "task_id": task_id,
+        "transcript": text,
+        "status": "Queued",
+        "message": "Audio payload transcribed and execution task queued successfully."
+    }

@@ -20,6 +20,7 @@ prompt_template = ChatPromptTemplate.from_messages([
 ])
 
 # raw_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
+model=os.getenv("OLLAMA_MODEL", "llama3.1:8b-q4_k_m")
 response = chat(
       messages=[
         {
@@ -28,7 +29,7 @@ response = chat(
         }
       ],
       options={'temperature': 0.5},
-      model='llama3.1:8b',
+      model=model,
       format=Config.model_json_schema(),
     )
 structured_llm = response.with_structured_output(Config)

@@ -1,0 +1,160 @@
+version: '3.8'
+
+networks:
+  config_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  chroma_data:
+  minio_data:
+
+services:
+  redis:
+    image: redis:7.0-alpine
+    container_name: config_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - config_network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: config_postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret_password
+      POSTGRES_DB: config_analytics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - config_network
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-28T22-35-53Z
+    container_name: config_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    networks:
+      - config_network
+    command: server /data --console-address ":9001"
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: config_phoenix
+    ports:
+      - "6006:6006"
+    networks:
+      - config_network
+
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: config_ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_storage:/root/.ollama
+  #   entrypoint: ["/bin/sh", "-c"]
+  #   command:
+  #     - |
+  #       echo "=== Checking/Pulling llama3.1:8b-q4_k_m ==="
+  #       ollama pull llama3.1:8b-q4_k_m
+  #       sleep 5
+  #       ollama serve &
+  #       echo "=== Model is ready! ==="
+  #       wait
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+
+  api_gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: config_api
+    ports:
+      - "8000:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - ENABLE_OBSERVABILITY=true
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://admin:secret_password@postgres:5432/config_analytics
+      - MINIO_INTERNAL_URL=http://minio:9000
+      - MINIO_PUBLIC_URL=http://localhost:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_TELEMETRY_BUCKET_NAME=config-telemetry-landing-zone
+      - MINIO_ASSETS_BUCKET_NAME=ai-assets
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - STABLE_DIFFUSION_BASE_URL=http://host.docker.internal:7860
+      - CHROMA_PERSIST_DIR=/app/server/chroma_db
+    depends_on:
+      - redis
+      - postgres
+      - phoenix
+      - minio
+    networks:
+      - config_network
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [ gpu ]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - chroma_data:/app/server/chroma_db
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: config_worker
+    command: celery -A server.celery_app.celery_engine worker --loglevel=info --concurrency=4
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - ENABLE_OBSERVABILITY=true
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_INTERNAL_URL=http://minio:9000
+      - MINIO_PUBLIC_URL=http://localhost:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      - MINIO_TELEMETRY_BUCKET_NAME=config-telemetry-landing-zone
+      - MINIO_ASSETS_BUCKET_NAME=ai-assets
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - STABLE_DIFFUSION_BASE_URL=http://host.docker.internal:7860
+      - CHROMA_PERSIST_DIR=/app/server/chroma_db
+    depends_on:
+      - redis
+      - minio
+    networks:
+      - config_network
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [ gpu ]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./server/static/docker_generated_outputs:/app/server/static/docker_generated_outputs
+      - chroma_data:/app/server/chroma_db

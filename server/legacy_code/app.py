@@ -10,11 +10,12 @@ os.environ["PATH"] = os.pathsep.join([
     p for p in os.environ["PATH"].split(os.pathsep)
     if "nvidia" not in p.lower() and "cudnn" not in p.lower()
 ])
-from server.config_generate import get_Config_config
+from server.legacy_code.config_generate import get_Config_config
+from server.background_image_generate import background_image_generator
 from flask_cors import CORS
 from pydub import AudioSegment
 from faster_whisper import WhisperModel, BatchedInferencePipeline
-from speech_to_text_fw import speech_to_text
+from server.r_and_d_code.speech_to_text_fw import speech_to_text
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
@@ -31,6 +32,9 @@ gpu_lock = threading.Lock()
 
 user_input =  "I want a animated look with digital time, a subtle date box at six o'clock, health Widgets around all the edges and elegant cyan circle Widget color with moonphase. Mouth out save report want box recognize strong. Work individual he then candidate easy here specific."
 "I want a timeless look with Roman numerals, a subtle date box at six o'clock, and elegant gold hands on a deep leather-brown background. Mouth out save report want box recognize strong. Work individual he then candidate easy here specific."
+
+background_image_generator._init_image_generation_pipeline()
+background_image_generator._init_gif_generation_pipeline()
 
 # @app.route('/', methods=["GET"])
 # def index():
