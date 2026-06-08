@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from server.gen_ai_service import execute_async_pipeline_job, get_orchestration_chain
+from server.gen_ai_service import _initialize_pipeline_chain, execute_async_pipeline_job, get_orchestration_chain
 from server.task_manager import global_task_manager, TaskState
 from server.rag_vector_store import build_vector_store, chroma_collection_exists, query_rag
 from server.r_and_d_code.speech_to_text_fw import speech_to_text
@@ -165,53 +165,6 @@ def knowledge_query(request: QueryRequest) -> dict:
     docs = query_rag(request.query, k=request.top_k)
     return {"query": request.query, "results": docs}
 
-def _run_config_task(task_id: str, user_input: str, use_rag: bool):
-    # update_task_status(task_id, "Queued", 0)
-    try:
-        update_task_status(task_id, "Running", 10)
-
-        context = "No additional context provided."
-        docs = []
-
-        if use_rag:
-            update_task_status(task_id, "Retrieving RAG context", 15)
-            docs = query_rag(user_input, k=4)
-            context = "\n\n".join(doc["page_content"] for doc in docs)
-            update_task_status(task_id, "RAG ready", 30)
-
-        with gpu_lock:
-            update_task_status(task_id, "Invoking model", 40)
-
-            def _progress_cb(status: str, progress: int, result: dict | None = None, error: str | None = None):
-                try:
-                    update_task_status(task_id, status, progress, result, error)
-                except Exception:
-                    pass
-
-            chain = get_orchestration_chain(task_id=task_id, progress_callback=_progress_cb)
-
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            pipeline_output = loop.run_until_complete(
-                chain.ainvoke({"user_input": user_input, "context": context})
-            )
-            loop.close()
-
-        update_task_status(task_id, "Finalizing output", 85)
-
-        update_task_status(
-            task_id,
-            "Completed",
-            100,
-            result={
-                "config": pipeline_output["config"],
-                "generated_asset_path": pipeline_output["generated_asset_path"],
-                "rag": {"enabled": use_rag, "documents": docs},
-            },
-        )
-    except Exception as exc:
-        update_task_status(task_id, "Failed", 100, error=str(exc))
-
 @app.get("/api/v2/tasks/{task_id}")
 async def get_task_status(task_id: str):
     job_query = celery_engine.AsyncResult(task_id)
@@ -243,6 +196,7 @@ async def continuous_queue_worker():
 
 @app.on_event("startup")
 async def startup_event():
+    _initialize_pipeline_chain()
     asyncio.create_task(continuous_queue_worker())
 
 @app.get("/api/v1/tasks/{task_id}", response_model=TaskState)
@@ -404,3 +358,50 @@ async def config_from_audio(audio: UploadFile = File(...), useRAG: bool = True) 
         "status": "Queued",
         "message": "Audio payload transcribed and execution task queued successfully."
     }
+
+def _run_config_task(task_id: str, user_input: str, use_rag: bool):
+    # update_task_status(task_id, "Queued", 0)
+    try:
+        update_task_status(task_id, "Running", 10)
+
+        context = "No additional context provided."
+        docs = []
+
+        if use_rag:
+            update_task_status(task_id, "Retrieving RAG context", 15)
+            docs = query_rag(user_input, k=4)
+            context = "\n\n".join(doc["page_content"] for doc in docs)
+            update_task_status(task_id, "RAG ready", 30)
+
+        with gpu_lock:
+            update_task_status(task_id, "Invoking model", 40)
+
+            def _progress_cb(status: str, progress: int, result: dict | None = None, error: str | None = None):
+                try:
+                    update_task_status(task_id, status, progress, result, error)
+                except Exception:
+                    pass
+
+            chain = get_orchestration_chain(task_id=task_id, progress_callback=_progress_cb)
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            pipeline_output = loop.run_until_complete(
+                chain.ainvoke({"user_input": user_input, "context": context})
+            )
+            loop.close()
+
+        update_task_status(task_id, "Finalizing output", 85)
+
+        update_task_status(
+            task_id,
+            "Completed",
+            100,
+            result={
+                "config": pipeline_output["config"],
+                "generated_asset_path": pipeline_output["generated_asset_path"],
+                "rag": {"enabled": use_rag, "documents": docs},
+            },
+        )
+    except Exception as exc:
+        update_task_status(task_id, "Failed", 100, error=str(exc))
