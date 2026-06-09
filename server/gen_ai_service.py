@@ -8,6 +8,7 @@ from time import time
 from typing import Any, Dict, Optional, Callable
 
 from dotenv import load_dotenv
+from langchain_core.output_parsers import StrOutputParser
 from langchain_ollama import ChatOllama
 from langchain_community.llms.ollama import Ollama
 from langchain_core.output_parsers.pydantic import PydanticOutputParser
@@ -71,6 +72,29 @@ def _load_prompt() -> str:
         return prompt_path.read_text(encoding="utf-8").strip()
     return "You are an expert JSON config device engine. Parse user requests into required JSON schemas."
 
+def _load_planner_prompt() -> str:
+    prompt_path = ROOT_DIR / "datasets" / "planner_compiler" / "planner_prompt.txt"
+    if prompt_path.exists():
+        return prompt_path.read_text(encoding="utf-8").strip()
+    return "You are an expert JSON config device engine. Parse user requests into required JSON schemas."
+
+def _load_compiler_prompt() -> str:
+    prompt_path = ROOT_DIR / "datasets" / "planner_compiler" / "compiler_prompt.txt"
+    if prompt_path.exists():
+        return prompt_path.read_text(encoding="utf-8").strip()
+    return "You are an expert JSON config device engine. Parse user requests into required JSON schemas."
+
+PLANNER_SYSTEM_PROMPT = _load_planner_prompt()
+COMPILER_SYSTEM_PROMPT = _load_compiler_prompt()
+
+def _create_shared_ollama_llm() -> ChatOllama:
+    return ChatOllama(
+        model=os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_k_m"),
+        temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0.5")),
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434"),
+    )
+
+shared_llm = _create_shared_ollama_llm()
 
 def _build_prompt_template(parser: PydanticOutputParser) -> ChatPromptTemplate:
     system_prompt = SystemMessagePromptTemplate(
@@ -212,6 +236,38 @@ async def dispatch_downstream_media(
     
     global_task_manager.update_task(task_id, status="LangChain complete", progress=90)
     return output_bundle
+
+def get_orchestration_dual_chain(task_id: Optional[str] = None):
+    
+    planner_prompt = ChatPromptTemplate.from_messages([
+        ("system", PLANNER_SYSTEM_PROMPT),
+        ("user", "User Request: {user_input}\n\nRAG context:\n{context}")
+    ])
+    planner_chain = planner_prompt | shared_llm | StrOutputParser()
+
+    complier_prompt = ChatPromptTemplate.from_messages([
+        ("system", COMPILER_SYSTEM_PROMPT),
+        ("user", "Compile this blueprint into a valid structured configuration:\n\n{blueprint}")
+    ])
+    structured_compiler = shared_llm.with_structured_output(Config)
+    builder_chain = complier_prompt | structured_compiler
+
+    async def _media_step(json_config: Config, config: RunnableConfig) -> Dict[str, Any]:
+        return await dispatch_downstream_media(
+            json_config=json_config,
+            config=config,
+            task_id=task_id
+        )
+
+    full_orchestration_pipeline = (
+        {
+            "blueprint": planner_chain 
+        }
+        | builder_chain 
+        | RunnableLambda(_media_step)
+    )
+    
+    return full_orchestration_pipeline
 
 def get_orchestration_chain(
     task_id: Optional[str] = None,

@@ -196,7 +196,7 @@ async def continuous_queue_worker():
 
 @app.on_event("startup")
 async def startup_event():
-    _initialize_pipeline_chain()
+    # _initialize_pipeline_chain()
     asyncio.create_task(continuous_queue_worker())
 
 @app.get("/api/v1/tasks/{task_id}", response_model=TaskState)

@@ -6,7 +6,7 @@ from typing import Dict, Any
 from celery import Celery
 import boto3
 from botocore.client import Config as BotoConfig
-from server.gen_ai_service import get_orchestration_chain
+from server.gen_ai_service import get_orchestration_dual_chain
 from services.s3_service import storage_service
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -30,7 +30,7 @@ GPU_CONCURRENCY_SEMAPHORE = asyncio.Semaphore(2)
 
 async def _gpu_bound_inference(task_id: str, user_input: str, context: str) -> Dict[str, Any]:
     async with GPU_CONCURRENCY_SEMAPHORE:
-        pipeline_chain = get_orchestration_chain(task_id)
+        pipeline_chain = get_orchestration_dual_chain(task_id)
 
         pipeline_output = await pipeline_chain.ainvoke({
                 "user_input": user_input,
